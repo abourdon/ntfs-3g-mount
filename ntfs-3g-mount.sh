@@ -18,9 +18,9 @@ MOUNTING_ERROR_EXIT_STATUS=40
 
 # Global configurations
 VOLUME_NAMES_SEPARATOR=','
-DEFAULT_VOLUMES_FOLDER='/Volumes'
 
 # User options
+volumesFolderOption='/Volumes'
 selectedVolumeNamesOption=''
 unmountOnlyOption=false
 
@@ -30,7 +30,7 @@ unmountOnlyOption=false
 # @return a list of currently connected NTFS drives in XML format, or exit in case of failure
 function listAvailableNTFSDrives {
     local ntfsDrives; ntfsDrives=$(diskutil list -plist | xmllint --xpath '//dict/key[text() = "Content"]/following-sibling::*[1][text() = "Windows_NTFS"]/..' - 2> /dev/null) || error $NO_NTFS_DRIVE_CONNECTED_EXIT_STATUS 'No NTFS drive connected.'
-    [ -z "$ntfsDrives" ] && exitWithMessageAndStatus $DISKUTIL_PARSING_ERROR_EXIT_STATUS 'Unable to get information from available volumes'
+    [ -z "$ntfsDrives" ] && error $DISKUTIL_PARSING_ERROR_EXIT_STATUS 'Unable to get information from available volumes'
     echo "<dicts>$ntfsDrives</dicts>"
 }
 
@@ -61,20 +61,22 @@ function readWriteMount {
     local deviceIdentifier="$1"
     local mountPath="$2"
 
-    # unmout if necessary
-    diskutil info -plist "$deviceIdentifier" | xmllint --xpath '//dict/key[text() = "MountPoint"]/following-sibling::*[1][text()]' - >> /dev/null 2>&1
+    # Unmount if necessary
+    local existingMountPath; existingMountPath=$(diskutil info -plist "$deviceIdentifier" | xmllint --xpath '//dict/key[text() = "MountPoint"]/following-sibling::*[1]/text()' - 2> /dev/null)
     if [ $? -eq 0 ]; then
         echo -n "Unmounting existing '$volumeName'... "
-        diskutil quiet unmount "$deviceIdentifier" 2> /dev/null || error $MOUNTING_ERROR_EXIT_STATUS "Unable to unmount '$deviceIdentifier'."
+        diskutil quiet unmount force "$deviceIdentifier" 2> /dev/null || error $MOUNTING_ERROR_EXIT_STATUS "Unable to unmount '$deviceIdentifier'."
+        # Remove old mounting point folder if necessary. It should be an empty directory
+        [ -e $existingMountPath ] && sudo rmdir $existingMountPath
         echo 'Done.'
     fi
     [ $unmountOnlyOption = true ] && return
 
-    # mount with NTFS-3G
+    # Mount with NTFS-3G
     echo -n "Mounting '$volumeName' with NTFS-3G... "
-    sudo mkdir "$mountPath" || exitWithMessageAndStatus $MOUNTING_ERROR_EXIT_STATUS "Unable to create mount path '$mountPath'."
+    sudo mkdir "$mountPath" || error $MOUNTING_ERROR_EXIT_STATUS "Unable to create mount path '$mountPath'."
     sudo /usr/local/bin/ntfs-3g "$deviceIdentifier" "$mountPath" -o local -o allow_other -o auto_xattr -o auto_cache || error $MOUNTING_ERROR_EXIT_STATUS "Unable to mount NTFS volume '$mountPath'."
-    echo "Done."
+    echo "Successfully mounted to $mountPath."
 }
 
 # Process selected NTFS drives to be (re-)mount in read/write mode
@@ -89,7 +91,7 @@ function processNTFSDrives {
         for volumeName in "${requiredVolumeName[@]}"; do
             [ -z "$volumeName" ] && continue
             local deviceIdentifier; deviceIdentifier=$(echo "$availableNTFSDrives" | xmllint --xpath "//dict/string[text() = '$volumeName']/../key[text() = 'DeviceIdentifier']/following-sibling::*[1]/text()" - 2> /dev/null) || error $DISKUTIL_PARSING_ERROR_EXIT_STATUS "Unable to find NTFS device '$volumeName'."
-            local mountPath=$DEFAULT_VOLUMES_FOLDER/$deviceIdentifier
+            local mountPath=$volumesFolderOption/$deviceIdentifier
             readWriteMount "/dev/$deviceIdentifier" "$mountPath"
         done
     done <<< "$selectedVolumeNames"
@@ -105,8 +107,9 @@ function displayHelp {
     echo ''
     echo "Usage: ${SCRIPT_NAME} [OPTIONS] [VOLUME NAMES...]"
     echo 'OPTIONS:'
-    echo '      -h | --help         Display this helper message.'
-    echo '      -u | --unmount      Unmount specified VOLUME NAMES. If VOLUME NAMES unspecified, then unmount all NTFS volumes currently mounted.'
+    echo '      -h | --help                         Display this helper message.'
+    echo '      -u | --unmount                      Unmount specified VOLUME NAMES. If VOLUME NAMES unspecified, then unmount all NTFS volumes currently mounted.'
+    echo "      -f | --volumes-folder VOLUME PATH   Path to the volume folder to use to mount/re-mount NTFS drives. $volumesFolderOption by default"
     echo "VOLUME NAMES: list of volume names to be used. If unspecified, then use all NTFS drives currentlly connected."
 }
 
@@ -124,6 +127,10 @@ function parseOptions {
                 ;;
             -u|--unmount)
                 unmountOnlyOption=true
+                ;;
+            -f|--volume-folder)
+                volumesFolderOption="$2"
+                shift
                 ;;
             *)
                 selectedVolumeNamesOption=$selectedVolumeNamesOption$VOLUME_NAMES_SEPARATOR"$argument"
