@@ -102,7 +102,7 @@ function processNTFSDrives {
 # @param nothing
 # @return the helper message
 function displayHelp {
-    echo 'Utilitary to automate NTFS drives mounting in read/write mode on OSX environment, by using the NTFS-3G driver.'
+    echo 'Automate NTFS drives mounting in read/write mode on OSX environment by using the NTFS-3G driver.'
     echo 'For more details, see https://github.com/osxfuse/osxfuse/wiki/NTFS-3G'
     echo ''
     echo "Usage: ${SCRIPT_NAME} [OPTIONS] [VOLUME NAMES...]"
