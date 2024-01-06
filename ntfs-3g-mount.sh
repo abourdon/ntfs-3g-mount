@@ -6,7 +6,7 @@
 #
 # @author Aurelien Bourdon
 
-# Script information
+# Script name
 SCRIPT_NAME="$0"
 
 # Exit status
@@ -16,11 +16,11 @@ NO_NTFS_DRIVE_CONNECTED_EXIT_STATUS=20
 DISKUTIL_PARSING_ERROR_EXIT_STATUS=30
 MOUNTING_ERROR_EXIT_STATUS=40
 
-# Delimiter between two volume names. Useful to allow spaces in volume names
+# Global configurations
 VOLUME_NAMES_SEPARATOR=','
 DEFAULT_VOLUMES_FOLDER='/Volumes'
 
-# Selected volume names (that can be specify further by user options)
+# User options
 selectedVolumeNamesOption=''
 unmountOnlyOption=false
 
@@ -29,10 +29,8 @@ unmountOnlyOption=false
 # @param nothing
 # @return a list of currently connected NTFS drives in XML format, or exit in case of failure
 function listAvailableNTFSDrives {
-    local ntfsDrives; ntfsDrives=$(diskutil list -plist | xmllint --xpath '//dict/key[text() = "Content"]/following-sibling::*[1][text() = "Windows_NTFS"]/..' - 2> /dev/null) || error $NO_NTFS_DRIVE_CONNECTED_EXIT_STATUS "No NTFS drive connected."
-    if [ -z "$ntfsDrives" ]; then
-        exitWithMessageAndStatus $DISKUTIL_PARSING_ERROR_EXIT_STATUS "Unable to get information from available volumes"
-    fi
+    local ntfsDrives; ntfsDrives=$(diskutil list -plist | xmllint --xpath '//dict/key[text() = "Content"]/following-sibling::*[1][text() = "Windows_NTFS"]/..' - 2> /dev/null) || error $NO_NTFS_DRIVE_CONNECTED_EXIT_STATUS 'No NTFS drive connected.'
+    [ -z "$ntfsDrives" ] && exitWithMessageAndStatus $DISKUTIL_PARSING_ERROR_EXIT_STATUS 'Unable to get information from available volumes'
     echo "<dicts>$ntfsDrives</dicts>"
 }
 
@@ -45,9 +43,9 @@ function selectVolumeNames {
     local ntfsDrives="$1"
     local requiredVolumeNames="$2"
     if [ -z "$requiredVolumeNames" ]; then
-        local numberOfNtfsDrives; numberOfNtfsDrives=$(echo "$ntfsDrives" | xmllint --xpath 'count(//dict)' - 2> /dev/null) || error $DISKUTIL_PARSING_ERROR_EXIT_STATUS "Unable to count the number of NTFS drives"
+        local numberOfNtfsDrives; numberOfNtfsDrives=$(echo "$ntfsDrives" | xmllint --xpath 'count(//dict)' - 2> /dev/null) || error $DISKUTIL_PARSING_ERROR_EXIT_STATUS 'Unable to count the number of NTFS drives.'
         for driveNumber in $(seq 1 $numberOfNtfsDrives); do
-            local volumeName; volumeName=$(echo "$ntfsDrives" | xmllint --xpath "//dict[$driveNumber]/key[text() = 'VolumeName']/following-sibling::*[1]/text()" - 2> /dev/null) || error $DISKUTIL_PARSING_ERROR_EXIT_STATUS "Unable to get NTFS volume name"
+            local volumeName; volumeName=$(echo "$ntfsDrives" | xmllint --xpath "//dict[$driveNumber]/key[text() = 'VolumeName']/following-sibling::*[1]/text()" - 2> /dev/null) || error $DISKUTIL_PARSING_ERROR_EXIT_STATUS 'Unable to get NTFS volume name.'
             requiredVolumeNames="$requiredVolumeNames$REQUIRED_VOLUME_NAMES_SEPARATOR$volumeName"
         done
     fi
@@ -67,17 +65,15 @@ function readWriteMount {
     diskutil info -plist "$deviceIdentifier" | xmllint --xpath '//dict/key[text() = "MountPoint"]/following-sibling::*[1][text()]' - >> /dev/null 2>&1
     if [ $? -eq 0 ]; then
         echo -n "Unmounting existing '$volumeName'... "
-        diskutil quiet unmount "$deviceIdentifier" 2> /dev/null || error $MOUNTING_ERROR_EXIT_STATUS "Unable to unmount $deviceIdentifier"
+        diskutil quiet unmount "$deviceIdentifier" 2> /dev/null || error $MOUNTING_ERROR_EXIT_STATUS "Unable to unmount '$deviceIdentifier'."
         echo 'Done.'
     fi
-    if [ $unmountOnlyOption = true ]; then
-        return
-    fi
+    [ $unmountOnlyOption = true ] && return
 
-    # mount with ntfs-3g
+    # mount with NTFS-3G
     echo -n "Mounting '$volumeName' with NTFS-3G... "
-    sudo mkdir "$mountPath" || exitWithMessageAndStatus $MOUNTING_ERROR_EXIT_STATUS "Unable to create mount path $mountPath"
-    sudo /usr/local/bin/ntfs-3g "$deviceIdentifier" "$mountPath" -o local -o allow_other -o auto_xattr -o auto_cache || error $MOUNTING_ERROR_EXIT_STATUS "Unable to mount NTFS volume $mountPath"
+    sudo mkdir "$mountPath" || exitWithMessageAndStatus $MOUNTING_ERROR_EXIT_STATUS "Unable to create mount path '$mountPath'."
+    sudo /usr/local/bin/ntfs-3g "$deviceIdentifier" "$mountPath" -o local -o allow_other -o auto_xattr -o auto_cache || error $MOUNTING_ERROR_EXIT_STATUS "Unable to mount NTFS volume '$mountPath'."
     echo "Done."
 }
 
@@ -91,10 +87,8 @@ function processNTFSDrives {
     local availableNTFSDrives="$2"
     while IFS=$VOLUME_NAMES_SEPARATOR read -a requiredVolumeName; do
         for volumeName in "${requiredVolumeName[@]}"; do
-            if [ -z "$volumeName" ]; then
-                continue
-            fi
-            local deviceIdentifier; deviceIdentifier=$(echo "$availableNTFSDrives" | xmllint --xpath "//dict/string[text() = '$volumeName']/../key[text() = 'DeviceIdentifier']/following-sibling::*[1]/text()" - 2> /dev/null) || error $DISKUTIL_PARSING_ERROR_EXIT_STATUS "Unable to find NTFS device '$volumeName'"
+            [ -z "$volumeName" ] && continue
+            local deviceIdentifier; deviceIdentifier=$(echo "$availableNTFSDrives" | xmllint --xpath "//dict/string[text() = '$volumeName']/../key[text() = 'DeviceIdentifier']/following-sibling::*[1]/text()" - 2> /dev/null) || error $DISKUTIL_PARSING_ERROR_EXIT_STATUS "Unable to find NTFS device '$volumeName'."
             local mountPath=$DEFAULT_VOLUMES_FOLDER/$deviceIdentifier
             readWriteMount "/dev/$deviceIdentifier" "$mountPath"
         done
@@ -106,17 +100,20 @@ function processNTFSDrives {
 # @param nothing
 # @return the helper message
 function displayHelp {
-    echo 'Utilitary to automate NTFS drives mounting in read/write mode on OSX environment, by using the NTFS-3G driver'
+    echo 'Utilitary to automate NTFS drives mounting in read/write mode on OSX environment, by using the NTFS-3G driver.'
+    echo 'For more details, see https://github.com/osxfuse/osxfuse/wiki/NTFS-3G'
+    echo ''
     echo "Usage: ${SCRIPT_NAME} [OPTIONS] [VOLUME NAMES...]"
     echo 'OPTIONS:'
-    echo '      -h | --help                         Display this helper message.'
-    echo '      -u | --unmount                      Unmount specified VOLUME NAMES. Or all NTFS volumes currently connected.'
-    echo "VOLUME NAMES: list of volume names to be used. If blank, then all NTFS drives that are currentlly connected will be used."
+    echo '      -h | --help         Display this helper message.'
+    echo '      -u | --unmount      Unmount specified VOLUME NAMES. If VOLUME NAMES unspecified, then unmount all NTFS volumes currently mounted.'
+    echo "VOLUME NAMES: list of volume names to be used. If unspecified, then use all NTFS drives currentlly connected."
 }
 
 # Parse user-given options and directly execute "self-contained" options
 #
 # @param $@ user options
+# @return nothing
 function parseOptions {
     while [[ $# -gt 0 ]]; do
         local argument="$1"
@@ -140,17 +137,19 @@ function parseOptions {
 #
 # @param $1 the exit status
 # @param $2 the error message to display
+# @return nothing
 function error {
     echo "Error: $2"
     exit $1
 }
 
 # Main entry point
+#
+# @param $@ the command line arguments
+# @return nothing
 function main {
     # First, ask for priviledges to be able to manipulate drives
-    if [[ $UID != 0 ]]; then
-        error $NO_ENOUGH_PREVILEDGES "Need priviledges. Please re-run this script with sudo"
-    fi
+    [ $UID -eq 0 ] || error $NO_ENOUGH_PREVILEDGES 'Need priviledges. Please re-run with sudo.'
 
     # Second, parse options and fill any *Option global variables
     parseOptions "$@"
@@ -161,5 +160,5 @@ function main {
     processNTFSDrives "$selectedVolumeNames" "$availableNTFSDrives"
 }
 
-# Execute entry point
+# Execute entry point by passing command line arguments
 main "$@"
